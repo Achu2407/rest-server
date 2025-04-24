@@ -14,6 +14,8 @@ import (
 	"time"
 
 	restserver "github.com/restic/rest-server"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestTLSSettings(t *testing.T) {
@@ -91,6 +93,7 @@ func TestTLSSettings(t *testing.T) {
 		})
 	}
 }
+
 
 func TestGetHandler(t *testing.T) {
 	dir, err := os.MkdirTemp("", "rest-server-test")
@@ -228,6 +231,7 @@ func testServerWithArgs(args []string, timeout time.Duration, cb func(context.Co
 	return nil
 }
 
+
 func TestHttpListen(t *testing.T) {
 	td := t.TempDir()
 
@@ -282,3 +286,14 @@ func TestHttpListen(t *testing.T) {
 		}
 	}
 }
+
+// Test generated using Keploy
+
+func TestCmdRootArgsValidation_WithArgs_456(t *testing.T) {
+	app := newRestServerApp()
+	cmd := app.CmdRoot
+	err := cmd.Args(cmd, []string{"some_arg"}) // Unexpected argument
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "rest-server expects no arguments - unknown argument: some_arg")
+}
+

@@ -17,6 +17,10 @@ import (
 	"testing"
 
 	"github.com/minio/sha256-simd"
+	"github.com/restic/rest-server/repo"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	//"github.com/restic/rest-server/repo" "// Needed if calling fn"
 )
 
 func TestJoin(t *testing.T) {
@@ -197,6 +201,7 @@ func createTestHandler(t *testing.T, conf *Server) (http.Handler, string, string
 }
 
 // TestResticAppendOnlyHandler runs tests on the restic handler code, especially in append-only mode.
+
 func TestResticAppendOnlyHandler(t *testing.T) {
 	mux, data, fileID, _, cleanup := createTestHandler(t, &Server{
 		AppendOnly:   true,
@@ -298,6 +303,7 @@ func createIdempotentDeleteSeq(t testing.TB, path string, data string) []TestReq
 }
 
 // TestResticHandler runs tests on the restic handler code, especially in append-only mode.
+
 func TestResticHandler(t *testing.T) {
 	mux, data, fileID, _, cleanup := createTestHandler(t, &Server{
 		NoAuth:       true,
@@ -329,6 +335,7 @@ func TestResticHandler(t *testing.T) {
 }
 
 // TestResticErrorHandler runs tests on the restic handler error handling.
+
 func TestEmptyList(t *testing.T) {
 	mux, _, _, _, cleanup := createTestHandler(t, &Server{
 		AppendOnly: true,
@@ -352,6 +359,7 @@ func TestEmptyList(t *testing.T) {
 			[]wantFunc{wantCode(http.StatusOK), wantBody("[]")})
 	}
 }
+
 
 func TestListWithUnexpectedFiles(t *testing.T) {
 	mux, _, _, tempdir, cleanup := createTestHandler(t, &Server{
@@ -380,6 +388,7 @@ func TestListWithUnexpectedFiles(t *testing.T) {
 			[]wantFunc{wantCode(http.StatusOK)})
 	}
 }
+
 
 func TestSplitURLPath(t *testing.T) {
 	var tests = []struct {
@@ -470,6 +479,7 @@ func (d *delayErrorReader) Read(_ []byte) (int, error) {
 }
 
 // TestAbortedRequest runs tests with concurrent upload requests for the same file.
+
 func TestAbortedRequest(t *testing.T) {
 	// the race condition doesn't happen for append-only repositories
 	mux, _, _, _, cleanup := createTestHandler(t, &Server{
@@ -541,3 +551,128 @@ func TestAbortedRequest(t *testing.T) {
 		},
 	)
 }
+
+// Test generated using Keploy
+
+func TestServeHTTP_InvalidFolderPathEmpty_222(t *testing.T) {
+	tempDir := t.TempDir()
+	server := &Server{
+		Path:   tempDir,
+		NoAuth: true, // No auth needed
+	}
+
+	// Path with invalid "" component according to folderPathValid
+	// Example: //repo/config -> split -> ["", "repo"] -> folderPathValid = false
+	req := httptest.NewRequest("GET", "//repo/config", nil)
+	rr := httptest.NewRecorder()
+
+	server.ServeHTTP(rr, req)
+
+	// folderPathValid checks this
+	assert.Equal(t, http.StatusNotFound, rr.Code)
+	assert.Contains(t, rr.Body.String(), http.StatusText(http.StatusNotFound))
+}
+
+// Test generated using Keploy
+
+func TestFolderPathValid_Validation_002(t *testing.T) {
+	// Arrange
+	validPaths := [][]string{
+		{"validFolder"},
+		{"anotherFolder", "subFolder"},
+	}
+	invalidPaths := [][]string{
+		{"", "..", "."},
+		{"invalid\x00Folder"},
+	}
+
+	// Act & Assert
+	for _, path := range validPaths {
+		assert.True(t, folderPathValid(path), "Expected path to be valid: %v", path)
+	}
+
+	for _, path := range invalidPaths {
+		assert.False(t, folderPathValid(path), "Expected path to be invalid: %v", path)
+	}
+}
+
+// Test generated using Keploy
+
+func TestServeHTTP_ProxyAuthUserMismatch_125(t *testing.T) {
+	tempDir := t.TempDir()
+	proxyUser := "proxied_user"
+	server := &Server{
+		Path:              tempDir,
+		NoAuth:            false, // Auth required
+		ProxyAuthUsername: proxyUser,
+	}
+
+	req := httptest.NewRequest("GET", "/some/repo/config", nil)
+	req.Header.Set("X-Forwarded-User", "different_user") // Mismatch
+	rr := httptest.NewRecorder()
+
+	server.ServeHTTP(rr, req)
+
+	// Expect Unauthorized because header user doesn't match configured proxy user
+	assert.Equal(t, http.StatusUnauthorized, rr.Code)
+}
+
+// Test generated using Keploy
+
+func TestMakeBlobMetricFunc_136(t *testing.T) {
+	// This function is simple, just test if it returns a non-nil function.
+	// Calling the returned function would require Prometheus registry setup, skip for unit test.
+	fn := makeBlobMetricFunc("user", []string{"repo"})
+	require.NotNil(t, fn)
+	// Example call (would panic without Prometheus setup)
+	// fn("data", repo.BlobWrite, 1024)
+}
+
+func TestJoin_PathSanitization_003(t *testing.T) {
+	// Arrange
+	base := "/base/path"
+	names := []string{"validFolder", "subFolder"}
+	invalidNames := []string{"invalid\x00Folder"}
+
+	// Act & Assert
+	joinedPath, err := join(base, names...)
+	assert.NoError(t, err)
+	assert.Equal(t, filepath.Join(base, "validFolder", "subFolder"), joinedPath)
+
+	_, err = join(base, invalidNames...)
+	assert.Error(t, err)
+}
+
+// Test generated using Keploy
+
+func TestHttpDefaultError_ResponseWriting_006(t *testing.T) {
+	// Arrange
+	res := httptest.NewRecorder()
+
+	// Act
+	httpDefaultError(res, http.StatusNotFound)
+
+	// Assert
+	assert.Equal(t, http.StatusNotFound, res.Code, "Expected HTTP status code to be 404")
+	assert.Equal(t, http.StatusText(http.StatusNotFound)+"\n", res.Body.String(), "Expected HTTP body to match status text")
+}
+
+// Test generated using Keploy
+
+func TestIsValidType_Coverage_890(t *testing.T) {
+	// Test known types
+	for _, typeName := range repo.ObjectTypes {
+		assert.True(t, isValidType(typeName), "Expected repo object type %s to be valid", typeName)
+	}
+	for _, typeName := range repo.FileTypes {
+		assert.True(t, isValidType(typeName), "Expected repo file type %s to be valid", typeName)
+	}
+
+	// Test unknown types
+	assert.False(t, isValidType("unknown"), "Expected 'unknown' to be invalid type")
+	assert.False(t, isValidType(""), "Expected empty string to be invalid type")
+	assert.False(t, isValidType("CONFIG"), "Expected case-sensitive 'CONFIG' to be invalid type") // Assuming types are case-sensitive
+}
+
+// Test generated using Keploy
+
