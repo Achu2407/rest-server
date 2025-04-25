@@ -24,7 +24,6 @@ type Server struct {
 	TLSCert              string
 	TLS                  bool
 	NoAuth               bool
-	ProxyAuthUsername    string
 	AppendOnly           bool
 	PrivateRepos         bool
 	Prometheus           bool
