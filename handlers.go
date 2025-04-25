@@ -22,7 +22,6 @@ type Server struct {
 	CPUProfile           string
 	TLSKey               string
 	TLSCert              string
-	TLSMinVer            string
 	TLS                  bool
 	NoAuth               bool
 	ProxyAuthUsername    string
