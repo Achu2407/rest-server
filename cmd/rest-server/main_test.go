@@ -13,7 +13,11 @@ import (
 	"testing"
 	"time"
 
+	"runtime"
+
 	restserver "github.com/restic/rest-server"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestTLSSettings(t *testing.T) {
@@ -91,6 +95,7 @@ func TestTLSSettings(t *testing.T) {
 		})
 	}
 }
+
 
 func TestGetHandler(t *testing.T) {
 	dir, err := os.MkdirTemp("", "rest-server-test")
@@ -228,6 +233,7 @@ func testServerWithArgs(args []string, timeout time.Duration, cb func(context.Co
 	return nil
 }
 
+
 func TestHttpListen(t *testing.T) {
 	td := t.TempDir()
 
@@ -282,3 +288,172 @@ func TestHttpListen(t *testing.T) {
 		}
 	}
 }
+
+// TestNewRestServerApp_DefaultsAndArgs_001 tests default values and argument parsing.
+
+func TestRunRoot_CPUProfiling_Success_005(t *testing.T) {
+	app := newRestServerApp()
+	tempFile, err := os.CreateTemp("", "cpu-profile-*.prof")
+	require.NoError(t, err)
+	profilePath := tempFile.Name()
+	_ = tempFile.Close() // Close the file so pprof can write to it.
+	defer os.Remove(profilePath)
+
+	app.CPUProfile = profilePath
+	app.Server.Listen = "127.0.0.1:0"
+	app.Server.NoAuth = true
+
+	ctx, cancel := context.WithCancel(context.Background())
+	app.CmdRoot.SetContext(ctx)
+
+	var runErr error
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		runErr = app.runRoot(app.CmdRoot, []string{})
+	}()
+
+	time.Sleep(150 * time.Millisecond) // Give time for profile to start and server to initialize
+	cancel()
+	wg.Wait()
+
+	if runErr != nil && !errors.Is(runErr, http.ErrServerClosed) {
+		// http.ErrServerClosed is acceptable if server started and then closed.
+		// context.Canceled might also be possible depending on exact shutdown sequence.
+		// For this test, the primary check is the profile file.
+		t.Logf("app.runRoot returned an error: %v", runErr)
+	}
+
+	info, err := os.Stat(profilePath)
+	require.NoError(t, err, "CPU profile file should exist")
+	assert.Greater(t, info.Size(), int64(0), "CPU profile file should not be empty")
+}
+
+// TestRunRoot_LoggingBranches_012 exercises different logging paths in runRoot.
+
+func TestRunRoot_LoggingBranches_012(t *testing.T) {
+	testCases := []struct {
+		name     string
+		setupApp func(app *restServerApp)
+		// We can't easily check log output without redirecting,
+		// so this test focuses on path coverage.
+	}{
+		{
+			name: "NoAuth",
+			setupApp: func(app *restServerApp) {
+				app.Server.NoAuth = true
+			},
+		},
+		{
+			name: "AuthEnabled (default htpasswd)",
+			setupApp: func(app *restServerApp) {
+				app.Server.NoAuth = false
+				// Create a dummy .htpasswd so NewHandler doesn't fail early
+				dummyHtpasswd := filepath.Join(app.Server.Path, ".htpasswd")
+				os.WriteFile(dummyHtpasswd, []byte("testuser:$apr1$blahblah$blah"), 0600)
+			},
+		},
+		{
+			name: "ProxyAuthEnabled",
+			setupApp: func(app *restServerApp) {
+				app.Server.NoAuth = false
+				app.Server.ProxyAuthUsername = "X-Remote-User"
+			},
+		},
+		{
+			name:     "AppendOnly",
+			setupApp: func(app *restServerApp) { app.Server.AppendOnly = true },
+		},
+		{
+			name:     "PrivateRepos",
+			setupApp: func(app *restServerApp) { app.Server.PrivateRepos = true },
+		},
+		{
+			name:     "GroupAccessibleRepos",
+			setupApp: func(app *restServerApp) { app.Server.GroupAccessibleRepos = true },
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			app := newRestServerApp()
+			app.Server.Path = t.TempDir()     // Ensure clean path for htpasswd if needed
+			app.Server.Listen = "127.0.0.1:0" // Allow server to start
+			if tc.name != "AuthEnabled (default htpasswd)" && tc.name != "ProxyAuthEnabled" {
+				app.Server.NoAuth = true // Default to NoAuth for simplicity unless testing auth
+			}
+
+			if tc.setupApp != nil {
+				tc.setupApp(app)
+			}
+
+			ctx, cancel := context.WithCancel(context.Background())
+			app.CmdRoot.SetContext(ctx)
+
+			var wg sync.WaitGroup
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				// Errors during startup are not the focus here, but path coverage.
+				_ = app.runRoot(app.CmdRoot, []string{})
+			}()
+
+			time.Sleep(50 * time.Millisecond) // Allow time for logs to be printed
+			cancel()
+			wg.Wait()
+			// No specific assertions on logs, just exercising the code paths.
+		})
+	}
+}
+
+func TestRunRoot_CPUProfileCreateError_004(t *testing.T) {
+	app := newRestServerApp()
+	// Path that cannot be created (e.g. a directory with the same name or read-only location)
+	// For simplicity, use a path that's highly likely to be invalid for file creation.
+	// Creating a directory with the same name as the file.
+	cpuProfileDir := filepath.Join(t.TempDir(), "cpu-profile-dir")
+	err := os.Mkdir(cpuProfileDir, 0755)
+	require.NoError(t, err)
+	app.CPUProfile = cpuProfileDir // Trying to create a file where a directory exists
+
+	app.Server.Listen = "127.0.0.1:0" // Minimal config
+	app.Server.NoAuth = true
+
+	ctx, cancel := context.WithCancel(context.Background())
+	app.CmdRoot.SetContext(ctx) // Set context for CmdRoot
+	defer cancel()              // Cancel at the end if not already
+
+	// Execute RunE directly
+	runErr := app.runRoot(app.CmdRoot, []string{})
+	require.Error(t, runErr)
+	// The specific error depends on OS, but it should be a path error.
+	// Example: "open <path>: is a directory" or "permission denied"
+	assert.Contains(t, runErr.Error(), cpuProfileDir)
+}
+
+// TestRunRoot_CPUProfiling_Success_005 verifies CPU profiling file creation.
+
+func TestNewRestServerApp_DefaultsAndArgs_001(t *testing.T) {
+	app := newRestServerApp()
+
+	assert.NotNil(t, app.CmdRoot)
+	assert.Equal(t, "rest-server", app.CmdRoot.Use)
+	assert.Equal(t, filepath.Join(os.TempDir(), "restic"), app.Server.Path)
+	assert.Equal(t, ":8000", app.Server.Listen)
+	assert.Equal(t, "1.2", app.Server.TLSMinVer)
+
+	// Test Args function
+	err := app.CmdRoot.Args(app.CmdRoot, []string{})
+	assert.NoError(t, err)
+
+	err = app.CmdRoot.Args(app.CmdRoot, []string{"foo"})
+	assert.Error(t, err)
+	assert.EqualError(t, err, "rest-server expects no arguments - unknown argument: foo")
+
+	expectedVersion := fmt.Sprintf("rest-server %s compiled with %v on %v/%v\n", version, runtime.Version(), runtime.GOOS, runtime.GOARCH)
+	assert.Equal(t, expectedVersion, app.CmdRoot.Version)
+}
+
+// TestRunRoot_CPUProfileCreateError_004 tests runRoot when os.Create for CPU profile fails.
+
